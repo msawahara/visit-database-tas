@@ -1,4 +1,4 @@
-/*****************************************************************************
+  /*****************************************************************************
 *
 * Copyright (c) 2000 - 2019, Lawrence Livermore National Security, LLC
 * Produced at the Lawrence Livermore National Laboratory
@@ -62,7 +62,7 @@ class avtTASFileFormat : public avtSTSDFileFormat
 {
   public:
                        avtTASFileFormat(const char *filename);
-    virtual           ~avtTASFileFormat() {;};
+    virtual           ~avtTASFileFormat();
 
     //
     // This is used to return unconvention data -- ranging from material
@@ -90,9 +90,52 @@ class avtTASFileFormat : public avtSTSDFileFormat
 
   protected:
     // DATA MEMBERS
-
+    enum EGridType {
+		  GRID_UNV,
+		  GRID_UNV2
+	  };
+    EGridType gridType;
     virtual void           PopulateDatabaseMetaData(avtDatabaseMetaData *);
+    std::string            gridFilename, rsltFilename;
+    size_t                 n_node, n_tetra, n_edge, n_tri, n_pri, n_pyr, n_quad, n_hex;
+  
+  private:
+    class dimdatReader {
+      public:
+          dimdatReader(const char *filename);
+         ~dimdatReader();
+
+        const std::string getGname(void);
+        const std::string getCname(void);
+        const int getZones(void);
+
+      private:
+        typedef struct DIMDATData_t {
+          std::string gname, cname;
+          size_t zones;
+        } DIMDATData;
+        DIMDATData dimdat;
+    };
+    class unformattedReader {
+      public:
+          unformattedReader(const char *filename);
+         ~unformattedReader();
+
+        void setSwapEndian(bool enableSwap);
+        size_t getRecordLength(void);
+
+        int readInt32(int32_t *dest, size_t length);
+        int readDouble(double *dest, size_t length);
+        int skip(size_t length);
+
+      private:
+        typedef int32_t RecordLength_t;
+        std::ifstream     ifsGrid, ifsRslt;
+        bool swap = false;
+        int32_t swapInt32(int32_t value);
+        double swapDouble(double value);
+    };
+
+    dimdatReader *dimdat;
 };
-
-
 #endif

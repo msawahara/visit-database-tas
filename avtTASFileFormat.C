@@ -44,9 +44,9 @@
 
 #include <string>
 
+#include <vtkCellType.h>
 #include <vtkFloatArray.h>
-#include <vtkRectilinearGrid.h>
-#include <vtkStructuredGrid.h>
+#include <vtkDoubleArray.h>
 #include <vtkUnstructuredGrid.h>
 
 #include <avtDatabaseMetaData.h>
@@ -54,7 +54,10 @@
 #include <DBOptionsAttributes.h>
 #include <Expression.h>
 
+#include <InvalidDBTypeException.h>
 #include <InvalidVariableException.h>
+
+#include <DebugStream.h>
 
 
 using     std::string;
@@ -72,6 +75,20 @@ avtTASFileFormat::avtTASFileFormat(const char *filename)
     : avtSTSDFileFormat(filename)
 {
     // INITIALIZE DATA MEMBERS
+    dimdat = new dimdatReader(filename);
+
+    const std::string dimdatFilename = filename;
+    const std::string dirname = dimdatFilename.substr(0, dimdatFilename.length() - 6);
+    gridFilename = dirname + dimdat->getGname() + ".grid";
+    rsltFilename = dirname + dimdat->getCname() + ".rslt";
+
+    debug1 << __func__ << ": gridFilename = " << gridFilename << std::endl;
+    debug1 << __func__ << ": rsltFilename = " << rsltFilename << std::endl;
+}
+
+avtTASFileFormat::~avtTASFileFormat()
+{
+    delete dimdat;
 }
 
 
@@ -111,95 +128,36 @@ avtTASFileFormat::FreeUpResources(void)
 void
 avtTASFileFormat::PopulateDatabaseMetaData(avtDatabaseMetaData *md)
 {
-    //
-    // CODE TO ADD A MESH
-    //
-    // string meshname = ...
-    //
-    // AVT_RECTILINEAR_MESH, AVT_CURVILINEAR_MESH, AVT_UNSTRUCTURED_MESH,
-    // AVT_POINT_MESH, AVT_SURFACE_MESH, AVT_UNKNOWN_MESH
-    // avtMeshType mt = AVT_RECTILINEAR_MESH;
-    //
-    // int nblocks = 1;  <-- this must be 1 for STSD
-    // int block_origin = 0;
-    // int spatial_dimension = 2;
-    // int topological_dimension = 2;
-    // double *extents = NULL;
-    //
-    // Here's the call that tells the meta-data object that we have a mesh:
-    //
-    // AddMeshToMetaData(md, meshname, mt, extents, nblocks, block_origin,
-    //                   spatial_dimension, topological_dimension);
-    //
+    std::vector <std::string> meshName;
+    const avtMeshType mt = AVT_UNSTRUCTURED_MESH;
+    const int nblocks = 1;
+    const int block_origin = 0;
+    const int spatial_dimension = 3;
+    const int topological_dimension = 3;
+    const double *extents = NULL;
 
-    //
-    // CODE TO ADD A SCALAR VARIABLE
-    //
-    // string mesh_for_this_var = meshname; // ??? -- could be multiple meshes
-    // string varname = ...
-    //
-    // AVT_NODECENT, AVT_ZONECENT, AVT_UNKNOWN_CENT
-    // avtCentering cent = AVT_NODECENT;
-    //
-    //
-    // Here's the call that tells the meta-data object that we have a var:
-    //
-    // AddScalarVarToMetaData(md, varname, mesh_for_this_var, cent);
-    //
+    meshName.push_back("volume");
 
-    //
-    // CODE TO ADD A VECTOR VARIABLE
-    //
-    // string mesh_for_this_var = meshname; // ??? -- could be multiple meshes
-    // string varname = ...
-    // int vector_dim = 2;
-    //
-    // AVT_NODECENT, AVT_ZONECENT, AVT_UNKNOWN_CENT
-    // avtCentering cent = AVT_NODECENT;
-    //
-    //
-    // Here's the call that tells the meta-data object that we have a var:
-    //
-    // AddVectorVarToMetaData(md, varname, mesh_for_this_var, cent,vector_dim);
-    //
+    const int zones = dimdat->getZones();
+    for (int i = 1; i <= zones; i++) {
+        std::string surfaceName = "surface/";
+        surfaceName += std::to_string(i);
+        // meshName.push_back(surfaceName);
+    }
 
-    //
-    // CODE TO ADD A TENSOR VARIABLE
-    //
-    // string mesh_for_this_var = meshname; // ??? -- could be multiple meshes
-    // string varname = ...
-    // int tensor_dim = 9;
-    //
-    // AVT_NODECENT, AVT_ZONECENT, AVT_UNKNOWN_CENT
-    // avtCentering cent = AVT_NODECENT;
-    //
-    //
-    // Here's the call that tells the meta-data object that we have a var:
-    //
-    // AddTensorVarToMetaData(md, varname, mesh_for_this_var, cent,tensor_dim);
-    //
+    for (int i = 0; i < meshName.size(); i++) {
+        // Add mesh
+        AddMeshToMetaData(md, meshName[i], mt, extents, nblocks, block_origin,
+                        spatial_dimension, topological_dimension);
 
-    //
-    // CODE TO ADD A MATERIAL
-    //
-    // string mesh_for_mat = meshname; // ??? -- could be multiple meshes
-    // string matname = ...
-    // int nmats = ...;
-    // vector<string> mnames;
-    // for (int i = 0 ; i < nmats ; i++)
-    // {
-    //     char str[32];
-    //     sprintf(str, "mat%d", i);
-    //     -- or -- 
-    //     strcpy(str, "Aluminum");
-    //     mnames.push_back(str);
-    // }
-    // 
-    // Here's the call that tells the meta-data object that we have a mat:
-    //
-    // AddMaterialToMetaData(md, matname, mesh_for_mat, nmats, mnames);
-    //
-    //
+        // add scalar vars
+        AddScalarVarToMetaData(md, "density", meshName[i], AVT_NODECENT);
+        AddScalarVarToMetaData(md, "pressure", meshName[i], AVT_NODECENT);
+
+        // add vector vars
+        AddVectorVarToMetaData(md, "velocity", meshName[i], AVT_NODECENT, spatial_dimension);
+    }
+
     // Here's the way to add expressions:
     //Expression momentum_expr;
     //momentum_expr.SetName("momentum");
@@ -234,7 +192,239 @@ avtTASFileFormat::PopulateDatabaseMetaData(avtDatabaseMetaData *md)
 vtkDataSet *
 avtTASFileFormat::GetMesh(const char *meshname)
 {
-    YOU MUST IMPLEMENT THIS
+    const int origin = 1;
+    const int zones = dimdat->getZones();
+    bool *zoneMask = new bool[zones + 1];
+    int32_t gridPreamble[21];
+    int readLen;
+
+    for(int i = 0; i <= zones; i++) {
+        zoneMask[i] = true;
+    }
+
+    unformattedReader gridReader(gridFilename.c_str());
+    size_t recl = gridReader.getRecordLength();
+
+    if (recl == 0x50000000 || recl == 0x54000000) {
+        gridReader.setSwapEndian(true);
+    }
+
+    recl = gridReader.getRecordLength();
+
+    switch(recl) {
+        case 0x50:
+            gridType = GRID_UNV;
+            debug1 << __func__ << ": grid type = unv " << std::endl;
+            break;
+        case 0x54:
+            gridType = GRID_UNV2;
+            debug1 << __func__ << ": grid type = unv2 " << std::endl;
+            break;
+        default:
+            debug1 << __func__ << ": invalid record length (len = " << recl << ")" << std::endl;
+            EXCEPTION1(InvalidDBTypeException, "Cannot detect grid type.");
+    }
+
+    if (gridType == GRID_UNV) {
+        readLen = gridReader.readInt32(gridPreamble, 20);
+        n_node  = gridPreamble[0];
+        n_tetra = gridPreamble[1];
+        n_edge  = gridPreamble[2];
+        n_tri   = gridPreamble[4];
+        n_pri   = gridPreamble[17];
+        n_pyr   = gridPreamble[18];
+        n_quad  = gridPreamble[19];
+        n_hex   = 0;
+    } else {
+        readLen = gridReader.readInt32(gridPreamble, 21);
+        n_node  = gridPreamble[0];
+        n_tetra = gridPreamble[1];
+        n_edge  = gridPreamble[2];
+        n_tri   = gridPreamble[4];
+        n_pri   = gridPreamble[17];
+        n_pyr   = gridPreamble[18];
+        n_quad  = gridPreamble[19];
+        n_hex   = gridPreamble[20];
+    }
+    if (readLen == 0) {
+        debug1 << __func__ << ": invalid preamble" << std::endl;
+        EXCEPTION1(InvalidDBTypeException, "invalid grid.");
+    }
+
+    // node
+    vtkPoints *points = vtkPoints::New();
+    points->SetDataTypeToDouble();
+    points->SetNumberOfPoints(n_node);
+    double *pointsPtr = (double *) points->GetVoidPointer(0);
+    readLen = gridReader.readDouble(pointsPtr, 3 * n_node);
+    if (readLen == 0) {
+        debug1 << __func__ << ": cannot read points" << std::endl;
+        EXCEPTION1(InvalidDBTypeException, "invalid grid.");
+    }
+
+    vtkUnstructuredGrid *grid = vtkUnstructuredGrid::New();
+    grid->SetPoints(points);
+    points->Delete();
+
+    // cell
+    int32_t *tetra2edge = new int32_t[6 * n_tetra];
+    readLen = gridReader.readInt32(tetra2edge, 6 * n_tetra);
+    if (readLen == 0) {
+        debug1 << __func__ << ": cannot read tetra to edge" << std::endl;
+        EXCEPTION1(InvalidDBTypeException, "invalid grid.");
+    }
+
+    int32_t *edge2node = new int32_t[2 * n_edge];
+    readLen = gridReader.readInt32(edge2node, 2 * n_edge);
+    if (readLen == 0) {
+        debug1 << __func__ << ": cannot read edge to node" << std::endl;
+        EXCEPTION1(InvalidDBTypeException, "invalid grid.");
+    }
+
+    // cell/tetra
+    for (int i = 0; i < n_tetra; i++) {
+        int32_t iedge1 = tetra2edge[i * 6 + 1 - origin] - origin;
+        int32_t iedge4 = tetra2edge[i * 6 + 4 - origin] - origin;
+
+        vtkIdType verts[4];
+        verts[0] = edge2node[iedge1 * 2 + 0] - origin;
+        verts[1] = edge2node[iedge1 * 2 + 1] - origin;
+        verts[2] = edge2node[iedge4 * 2 + 0] - origin;
+        verts[3] = edge2node[iedge4 * 2 + 1] - origin;
+
+        grid->InsertNextCell(VTK_TETRA, 4, verts);
+    }
+    
+    delete[] tetra2edge;
+
+    int32_t *tri2node_zone = new int32_t[4 * n_tri];
+    readLen = gridReader.readInt32(tri2node_zone, 4 * n_tri);
+    if (readLen == 0) {
+        debug1 << __func__ << ": cannot read triangle to node" << std::endl;
+        EXCEPTION1(InvalidDBTypeException, "invalid grid.");
+    }
+
+    // surface/tri
+    for (int i = 0; i < n_tri; i++) {
+        vtkIdType verts[3];
+        verts[0] = tri2node_zone[i * 4 + 0] - origin;
+        verts[1] = tri2node_zone[i * 4 + 1] - origin;
+        verts[2] = tri2node_zone[i * 4 + 2] - origin;
+        int32_t zone = tri2node_zone[i * 4 + 3];
+
+        grid->InsertNextCell(VTK_TRIANGLE, 3, verts);
+    }
+
+    delete[] tri2node_zone;
+
+    int32_t *prism2edge = new int32_t[9 * n_pri];
+    readLen = gridReader.readInt32(prism2edge, 9 * n_pri);
+    if (readLen == 0) {
+        debug1 << __func__ << ": cannot read prism to edge" << std::endl;
+        EXCEPTION1(InvalidDBTypeException, "invalid grid.");
+    }
+
+    // cell/prism
+    for (int i = 0; i < n_pri; i++) {
+        int32_t iedge7 = prism2edge[i * 9 + 7 - origin] - origin;
+        int32_t iedge8 = prism2edge[i * 9 + 8 - origin] - origin;
+        int32_t iedge9 = prism2edge[i * 9 + 9 - origin] - origin;
+
+        vtkIdType verts[6];
+        verts[0] = edge2node[iedge7 * 2 + 0] - origin;
+        verts[1] = edge2node[iedge8 * 2 + 0] - origin;
+        verts[2] = edge2node[iedge9 * 2 + 0] - origin;
+        verts[3] = edge2node[iedge7 * 2 + 1] - origin;
+        verts[4] = edge2node[iedge8 * 2 + 1] - origin;
+        verts[5] = edge2node[iedge9 * 2 + 1] - origin;
+
+        grid->InsertNextCell(VTK_WEDGE, 6, verts);
+    }
+
+    delete[] prism2edge;
+
+    int32_t *pyramid2node = new int32_t[5 * n_pyr];
+    readLen = gridReader.readInt32(pyramid2node, 5 * n_pyr);
+    if (readLen == 0) {
+        debug1 << __func__ << ": cannot read pyramid to node" << std::endl;
+        EXCEPTION1(InvalidDBTypeException, "invalid grid.");
+    }
+
+    // cell/pyramid
+    for (int i = 0; i < n_pyr; i++) {
+        vtkIdType verts[5];
+        verts[0] = pyramid2node[i * 5 + 0] - origin;
+        verts[1] = pyramid2node[i * 5 + 1] - origin;
+        verts[2] = pyramid2node[i * 5 + 2] - origin;
+        verts[3] = pyramid2node[i * 5 + 3] - origin;
+        verts[4] = pyramid2node[i * 5 + 4] - origin;
+
+        grid->InsertNextCell(VTK_PYRAMID, 5, verts);
+    }
+
+    delete[] pyramid2node;
+
+    int32_t *pyramid2edge = new int32_t[8 * n_pyr];
+    readLen = gridReader.readInt32(pyramid2edge, 8 * n_pyr);
+    if (readLen == 0) {
+        debug1 << __func__ << ": cannot read pyramid to edge" << std::endl;
+        EXCEPTION1(InvalidDBTypeException, "invalid grid.");
+    }
+    delete[] pyramid2edge;
+
+    int32_t *rect2node_zone = new int32_t[5 * n_quad];
+    readLen = gridReader.readInt32(rect2node_zone, 5 * n_quad);
+    if (readLen == 0) {
+        debug1 << __func__ << ": cannot read rectangle to node" << std::endl;
+        EXCEPTION1(InvalidDBTypeException, "invalid grid.");
+    }
+
+    // surface/quad
+    for (int i = 0; i < n_quad; i++) {
+        vtkIdType verts[4];
+        verts[0] = rect2node_zone[i * 5 + 0] - origin;
+        verts[1] = rect2node_zone[i * 5 + 1] - origin;
+        verts[2] = rect2node_zone[i * 5 + 2] - origin;
+        verts[3] = rect2node_zone[i * 5 + 3] - origin;
+        int32_t zone = rect2node_zone[i * 5 + 5];
+
+        grid->InsertNextCell(VTK_QUAD, 4, verts);
+    }
+    
+    delete[] rect2node_zone;
+
+    int32_t *hexa2edge = new int32_t[12 * n_hex];
+    readLen = gridReader.readInt32(hexa2edge, 12 * n_hex);
+    if (readLen == 0) {
+        debug1 << __func__ << ": cannot read hexahedron to edge" << std::endl;
+        EXCEPTION1(InvalidDBTypeException, "invalid grid.");
+    }
+
+    // cell/hexa
+    for (int i = 0; i < n_hex; i++) {
+        int32_t iedge9  = hexa2edge[i * 12 + 9  - origin] - origin;
+        int32_t iedge10 = hexa2edge[i * 12 + 10 - origin] - origin;
+        int32_t iedge11 = hexa2edge[i * 12 + 11 - origin] - origin;
+        int32_t iedge12 = hexa2edge[i * 12 + 12 - origin] - origin;
+
+        vtkIdType verts[8];
+        verts[0] = edge2node[iedge9  * 2 + 0] - origin;
+        verts[1] = edge2node[iedge9  * 2 + 1] - origin;
+        verts[2] = edge2node[iedge10 * 2 + 1] - origin;
+        verts[3] = edge2node[iedge10 * 2 + 0] - origin;
+        verts[4] = edge2node[iedge11 * 2 + 0] - origin;
+        verts[5] = edge2node[iedge11 * 2 + 1] - origin;
+        verts[6] = edge2node[iedge12 * 2 + 1] - origin;
+        verts[7] = edge2node[iedge12 * 2 + 0] - origin;
+
+        grid->InsertNextCell(VTK_HEXAHEDRON, 8, verts);
+    }
+
+    delete[] hexa2edge;
+
+    delete[] edge2node;
+
+    return grid;
 }
 
 
@@ -257,29 +447,54 @@ avtTASFileFormat::GetMesh(const char *meshname)
 vtkDataArray *
 avtTASFileFormat::GetVar(const char *varname)
 {
-    YOU MUST IMPLEMENT THIS
+    std::string varType = varname;
+    int readLen;
 
-    //
-    // If you have a file format where variables don't apply (for example a
-    // strictly polygonal format like the STL (Stereo Lithography) format,
-    // then uncomment the code below.
-    //
-    // EXCEPTION1(InvalidVariableException, varname);
-    //
+    unformattedReader rsltReader(rsltFilename.c_str());
+    size_t recl = rsltReader.getRecordLength();
 
-    //
-    // If you do have a scalar variable, here is some code that may be helpful.
-    //
-    // int ntuples = XXX; // this is the number of entries in the variable.
-    // vtkFloatArray *rv = vtkFloatArray::New();
-    // rv->SetNumberOfTuples(ntuples);
-    // for (int i = 0 ; i < ntuples ; i++)
-    // {
-    //      rv->SetTuple1(i, VAL);  // you must determine value for ith entry.
-    // }
-    //
-    // return rv;
-    //
+    if (recl == 0x08000000) {
+        rsltReader.setSwapEndian(true);
+    }
+
+    recl = rsltReader.getRecordLength();
+    if (recl != 8) {
+        debug1 << __func__ << ": invalid record length (len = " << recl << ")" << std::endl;
+        EXCEPTION1(InvalidDBTypeException, "Cannot detect grid type.");
+    }
+
+    rsltReader.skip(8);
+    rsltReader.skip(8);
+
+    if (varType == "density") {
+        // density is first data
+    } else if (varType == "pressure") {
+        // skip density and velocity
+        rsltReader.skip(n_node * sizeof(double)); // pressure
+        rsltReader.skip(n_node * sizeof(double)); // velocity u
+        rsltReader.skip(n_node * sizeof(double)); // velocity v
+        rsltReader.skip(n_node * sizeof(double)); // velocity w
+    } else {
+        EXCEPTION1(InvalidVariableException, varname);
+    }
+
+    double *data = new double[n_node];
+    readLen = rsltReader.readDouble(data, n_node);
+    if (readLen == 0) {
+        debug1 << __func__ << ": cannot read variable." << std::endl;
+        EXCEPTION1(InvalidDBTypeException, "invalid grid.");
+    }
+
+    vtkDoubleArray *array = vtkDoubleArray::New();
+    array->SetNumberOfTuples(n_node);
+ 
+    for (int i = 0; i < n_node; i++) {
+        array->SetTuple1(i, data[i]);
+    }
+ 
+    delete[] data;
+ 
+    return array;
 }
 
 
@@ -302,37 +517,251 @@ avtTASFileFormat::GetVar(const char *varname)
 vtkDataArray *
 avtTASFileFormat::GetVectorVar(const char *varname)
 {
-    YOU MUST IMPLEMENT THIS
+    std::string varType = varname;
+    int readLen;
 
-    //
-    // If you have a file format where variables don't apply (for example a
-    // strictly polygonal format like the STL (Stereo Lithography) format,
-    // then uncomment the code below.
-    //
-    // EXCEPTION1(InvalidVariableException, varname);
-    //
+    unformattedReader rsltReader(rsltFilename.c_str());
+    size_t recl = rsltReader.getRecordLength();
 
-    //
-    // If you do have a vector variable, here is some code that may be helpful.
-    //
-    // int ncomps = YYY;  // This is the rank of the vector - typically 2 or 3.
-    // int ntuples = XXX; // this is the number of entries in the variable.
-    // vtkFloatArray *rv = vtkFloatArray::New();
-    // int ucomps = (ncomps == 2 ? 3 : ncomps);
-    // rv->SetNumberOfComponents(ucomps);
-    // rv->SetNumberOfTuples(ntuples);
-    // float *one_entry = new float[ucomps];
-    // for (int i = 0 ; i < ntuples ; i++)
-    // {
-    //      int j;
-    //      for (j = 0 ; j < ncomps ; j++)
-    //           one_entry[j] = ...
-    //      for (j = ncomps ; j < ucomps ; j++)
-    //           one_entry[j] = 0.;
-    //      rv->SetTuple(i, one_entry); 
-    // }
-    //
-    // delete [] one_entry;
-    // return rv;
-    //
+    if (recl == 0x08000000) {
+        rsltReader.setSwapEndian(true);
+    }
+
+    recl = rsltReader.getRecordLength();
+    if (recl != 8) {
+        debug1 << __func__ << ": invalid record length (len = " << recl << ")" << std::endl;
+        EXCEPTION1(InvalidDBTypeException, "Cannot detect grid type.");
+    }
+
+    rsltReader.skip(8);
+    rsltReader.skip(8);
+
+    if (varType == "velocity") {
+        // skip density
+        rsltReader.skip(n_node * 1 * sizeof(double)); // pressure
+    } else {
+        EXCEPTION1(InvalidVariableException, varname);
+    }
+
+    double *u = new double[n_node];
+    double *v = new double[n_node];
+    double *w = new double[n_node];
+    readLen  = rsltReader.readDouble(u, n_node);
+    readLen += rsltReader.readDouble(v, n_node);
+    readLen += rsltReader.readDouble(w, n_node);
+    if (readLen != 3 * n_node) {
+        debug1 << __func__ << ": cannot read variable." << std::endl;
+        EXCEPTION1(InvalidDBTypeException, "invalid grid.");
+    }
+
+    vtkDoubleArray *array = vtkDoubleArray::New();
+    array->SetNumberOfComponents(3);
+    array->SetNumberOfTuples(n_node);
+ 
+    for (int i = 0; i < n_node; i++) {
+        double entry[3] = {u[i], v[i], w[i]};
+        array->SetTuple(i, entry);
+    }
+ 
+    delete[] u, v, w;
+ 
+    return array;
+}
+
+avtTASFileFormat::unformattedReader::unformattedReader(const char *filename)
+{
+    ifsGrid.open(filename, std::ios::binary);
+
+    if (!ifsGrid) {
+        EXCEPTION1(InvalidDBTypeException, "Failed to open file.");
+    }
+}
+
+avtTASFileFormat::unformattedReader::~unformattedReader()
+{
+    if (ifsGrid) {ifsGrid.close();}
+}
+
+void avtTASFileFormat::unformattedReader::setSwapEndian(bool enableSwap)
+{
+    swap = enableSwap;
+}
+
+size_t avtTASFileFormat::unformattedReader::getRecordLength()
+{
+    RecordLength_t recl;
+    
+    ifsGrid.read((char *) &recl, sizeof(RecordLength_t));
+    ifsGrid.seekg(-sizeof(RecordLength_t), std::ios_base::cur);
+
+    if (swap) {
+        recl = swapInt32(recl);
+    }
+
+    return recl;
+}
+
+int avtTASFileFormat::unformattedReader::readInt32(int32_t *dest, size_t length)
+{
+    RecordLength_t recl;
+    
+    ifsGrid.read((char *) &recl, sizeof(RecordLength_t));
+    if (swap) {
+        recl = swapInt32(recl);
+    }
+
+    if (recl != length * sizeof(int32_t)) {
+        return 0;
+    }
+
+    ifsGrid.read((char *) dest, recl);
+
+    if (swap) {
+        for (size_t i = 0; i < length; i++) {
+            dest[i] = swapInt32(dest[i]);
+        }
+    }
+
+    ifsGrid.seekg(sizeof(RecordLength_t), std::ios_base::cur);
+
+    return length;
+}
+
+int avtTASFileFormat::unformattedReader::readDouble(double *dest, size_t length)
+{
+    RecordLength_t recl;
+    
+    ifsGrid.read((char *) &recl, sizeof(RecordLength_t));
+    if (swap) {
+        recl = swapInt32(recl);
+    }
+
+    if (recl != length * sizeof(double)) {
+        return 0;
+    }
+
+    ifsGrid.read((char *) dest, recl);
+
+    if (swap) {
+        for (size_t i = 0; i < length; i++) {
+            dest[i] = swapDouble(dest[i]);
+        }
+    }
+
+    ifsGrid.seekg(sizeof(RecordLength_t), std::ios_base::cur);
+
+    return length;
+}
+
+int avtTASFileFormat::unformattedReader::skip(size_t length)
+{
+    RecordLength_t recl;
+    
+    ifsGrid.read((char *) &recl, sizeof(RecordLength_t));
+    if (swap) {
+        recl = swapInt32(recl);
+    }
+
+    if (recl != length) {
+        return 0;
+    }
+
+    ifsGrid.seekg(length, std::ios_base::cur);
+
+    ifsGrid.seekg(sizeof(RecordLength_t), std::ios_base::cur);
+
+    return length;
+}
+
+int32_t avtTASFileFormat::unformattedReader::swapInt32(int32_t value)
+{
+    unsigned char *in_c, *out_c;
+    int32_t swap;
+    in_c  = (unsigned char *) &value;
+    out_c = (unsigned char *) &swap;
+
+    out_c[0] = in_c[3];
+    out_c[1] = in_c[2];
+    out_c[2] = in_c[1];
+    out_c[3] = in_c[0];
+
+    return swap;
+}
+
+double avtTASFileFormat::unformattedReader::swapDouble(double value)
+{
+    unsigned char *in_c, *out_c;
+    double swap;
+    in_c  = (unsigned char *) &value;
+    out_c = (unsigned char *) &swap;
+
+    out_c[0] = in_c[7];
+    out_c[1] = in_c[6];
+    out_c[2] = in_c[5];
+    out_c[3] = in_c[4];
+    out_c[4] = in_c[3];
+    out_c[5] = in_c[2];
+    out_c[6] = in_c[1];
+    out_c[7] = in_c[0];
+
+    return swap;
+}
+
+avtTASFileFormat::dimdatReader::dimdatReader(const char *filename)
+{
+    std::ifstream ifsDimdat;
+    std::string line;
+    std::string name;
+    size_t p, q;
+
+    ifsDimdat.open(filename);
+
+    for (int lineNo = 1; lineNo < 16; lineNo++) {
+        std::getline(ifsDimdat, line);
+        switch (lineNo)
+        {
+            case 3: // gname
+            case 4: // cname
+                if ((p = line.find("\"")) >= 0) {
+                    q = line.find("\"", p + 1);
+                    if (q == -1) {/* Error */}
+                    name = line.substr(p + 1, q - p - 1);
+                } else {
+                    q = line.find(" ");
+                    name = line.substr(0, q);
+                }
+                if (lineNo == 3) {
+                    dimdat.gname = name;
+                    debug1 << __func__ << ": gname = " << dimdat.gname << std::endl;
+                } else {
+                    dimdat.cname = name;
+                    debug1 << __func__ << ": cname = " << dimdat.cname << std::endl;
+                }
+                break;
+            case 15:
+                dimdat.zones = stoi(line);
+                debug1 << __func__ << ": zones = " << dimdat.zones << std::endl;
+            default:
+                break;
+        }
+    }
+}
+
+avtTASFileFormat::dimdatReader::~dimdatReader()
+{
+}
+
+const std::string avtTASFileFormat::dimdatReader::getGname(void)
+{
+    return dimdat.gname;
+}
+
+const std::string avtTASFileFormat::dimdatReader::getCname(void)
+{
+    return dimdat.cname;
+}
+
+const int avtTASFileFormat::dimdatReader::getZones(void)
+{
+    return dimdat.zones;
 }
